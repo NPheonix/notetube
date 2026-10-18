@@ -1,0 +1,9 @@
+# Streamlit settings (safe to commit - no secrets here).
+[theme]
+primaryColor = "#ff4b4b"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
