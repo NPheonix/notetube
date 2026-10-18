@@ -42,14 +42,31 @@ from pdf_tools import open_pdf, part_pdf_bytes, plan_parts
 # 1. SETTINGS - change these if Google renames or retires a model.
 #    Current model names: https://ai.google.dev/gemini-api/docs/models
 # ---------------------------------------------------------------------------
-MODEL_NAME = "gemini-3.8-flash"  # the model we try first
+# The two main models. Each has its OWN separate free limits.
+BEST_MODEL = "gemini-3.8-flash"        # best quality
+MORE_MODEL = "gemini-3.5-flash-lite"   # good quality, many more free requests
 
-# If MODEL_NAME hits its free limit (or is unavailable), we try these in order.
-# All of them are on Gemini's free tier, and each model has its OWN separate
-# free limits - so when one is used up for the day, the next one still works.
+# Free limits per model: (requests per day, requests per minute).
+# See yours at https://aistudio.google.com/rate-limit
+FREE_LIMITS = {BEST_MODEL: (20, 5), MORE_MODEL: (500, 15)}
+MODEL_LABELS = {BEST_MODEL: "3.8 Flash", MORE_MODEL: "3.5 Flash Lite", "gemini-3.6-flash": "3.6 Flash",
+                "gemini-3-flash-preview": "3 Flash Preview", "gemini-2.5-flash": "2.5 Flash",
+                "gemini-2.5-flash-lite": "2.5 Flash Lite"}
+
+# The "Model" choice in the sidebar. None = Auto (see choose_model below):
+#   YouTube and short detailed PDFs -> BEST_MODEL
+#   flashcards, quick summaries and PDFs with many parts -> MORE_MODEL
+MODEL_CHOICES = {
+    "Auto (recommended)": None,
+    "Best quality (3.8 Flash, ~20/day)": BEST_MODEL,
+    "More requests (3.5 Flash Lite, ~500/day)": MORE_MODEL,
+}
+AUTO_MORE_FROM_PARTS = 4   # Auto: PDFs with this many parts (or more) use MORE_MODEL
+
+# If the chosen model can't answer (limit reached, busy, retired), we switch
+# to the OTHER main model, then try these free backups in order.
 # (Free tier list: https://ai.google.dev/gemini-api/docs/pricing)
 FALLBACK_MODELS = [
-    "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3-flash-preview",
     "gemini-2.5-flash",
@@ -76,9 +93,7 @@ PDF_STYLES = {
     "Quick summary": 150,
     "Flashcards (Anki CSV)": 25,
 }
-PAUSE_BETWEEN_PARTS = 10   # seconds; keeps us under the free 5-requests-per-minute limit
 MAX_UPLOAD_MB = 200        # must match maxUploadSize in .streamlit/config.toml
-FREE_REQUESTS_PER_DAY = 20
 
 # ---------------------------------------------------------------------------
 # 2. PROMPTS - the instructions we give Gemini.
@@ -92,6 +107,7 @@ Strict rules:
 - Never invent quotes or timestamps. Only give a timestamp (mm:ss) if you can see it in the video or transcript.
 - Write in clean Markdown: '#'/'##' headings, '-' bullets, '**bold**' for key terms. No HTML, no code blocks.
 - Start directly with the notes. No greeting, no "Here are your notes", no closing remarks.
+- Don't write the format name (e.g. "QUICK SUMMARY") in the notes.
 """
 
 STYLE_PROMPTS = {
@@ -161,6 +177,7 @@ Strict rules:
 - Write formulas in plain text on their own line, e.g. `Speed = Distance / Time`, and say what each symbol means. No LaTeX.
 - Clean Markdown only: '#' headings, '-' bullets, '**bold**' key terms, Markdown tables. No HTML.
 - Start directly with the notes. No greeting, no "Here are your notes", no closing remarks.
+- Don't write the format name (e.g. "QUICK SUMMARY") in the notes.
 """
 
 PDF_STYLE_PROMPTS = {
@@ -386,6 +403,54 @@ class QuotaError(Exception):
 LAST_SKIPS = []
 
 
+def label(model: str) -> str:
+    """Friendly model name, e.g. 'gemini-3.8-flash' -> '3.8 Flash'."""
+    return MODEL_LABELS.get(model, model)
+
+
+def pause_between_parts(model: str) -> float:
+    """Seconds to wait between PDF parts so we stay under the model's per-minute limit."""
+    per_minute = FREE_LIMITS.get(model, (0, 5))[1]
+    return 60 / per_minute   # 3.8 Flash: 12 s, 3.5 Flash Lite: 4 s
+
+
+def models_out_today() -> set:
+    """Models whose DAILY free limit ran out earlier in this session (today)."""
+    today = datetime.now().date().isoformat()
+    return {m for m, day in st.session_state.get("out_of_quota", {}).items() if day == today}
+
+
+def model_order(first_model: str) -> list:
+    """The order we try models in: your choice, then the other main model, then
+    the backups. Models already used up today go to the end of the line, so we
+    don't waste time asking them first (they're still tried as a last resort)."""
+    other = MORE_MODEL if first_model == BEST_MODEL else BEST_MODEL
+    order = list(dict.fromkeys([first_model, other] + FALLBACK_MODELS))   # dict.fromkeys removes repeats
+    out = models_out_today()
+    return [m for m in order if m not in out] + [m for m in order if m in out]
+
+
+def switch_message(wanted: str, used: str):
+    """If a different model answered than the one chosen, explain why in plain English."""
+    if used == wanted:
+        return None
+    if wanted in models_out_today():
+        why = "its daily free limit is reached"
+    else:
+        why = next((s.split(": ", 1)[1] for s in LAST_SKIPS if s.startswith(wanted + ":")), "it wasn't available")
+        why = why.replace("free limit reached", "free limit is reached")
+    return f"🔄 {label(wanted)} couldn't be used ({why}), so NoteTube switched to {label(used)}."
+
+
+def drop_format_name(text: str) -> str:
+    """Safety net: some models start with the format name from our prompt,
+    e.g. "QUICK SUMMARY". Drop a first line that is only capital letters."""
+    first, _, rest = text.partition("\n")
+    if re.fullmatch(r"[A-Z][A-Z &]{3,40}", first.strip()):
+        return rest.strip()
+    return text
+
+
 def retry_wait(err) -> float:
     """How long Google asks us to wait before retrying (it says e.g. 'retry in 17s')."""
     match = re.search(r"(?:retry in|retryDelay['\"]?:\s*['\"])\s*(\d+(?:\.\d+)?)s", str(err))
@@ -402,8 +467,9 @@ def quota_kind(err) -> str:
     return "minute"
 
 
-def ask_gemini(api_key: str, contents, system_prompt: str, is_video: bool = False, json_schema=None):
-    """Send a request to Gemini, trying each model until one works.
+def ask_gemini(api_key: str, contents, system_prompt: str, first_model: str = BEST_MODEL,
+               is_video: bool = False, json_schema=None):
+    """Send a request to Gemini, starting with first_model and switching models if needed.
 
     Returns (notes_text, model_used). We move on to the next model when one
     is out of quota (429), not available (404) or temporarily overloaded (5xx).
@@ -427,7 +493,7 @@ def ask_gemini(api_key: str, contents, system_prompt: str, is_video: bool = Fals
     quota_kinds = []
     LAST_SKIPS.clear()
 
-    for model in [MODEL_NAME] + FALLBACK_MODELS:
+    for model in model_order(first_model):
         # Up to 2 tries per model: if Google says "busy" or "too many requests
         # this minute", we wait and retry the SAME model once before moving on.
         # (Keeps all parts of a PDF written by the same model, in the same style.)
@@ -435,7 +501,7 @@ def ask_gemini(api_key: str, contents, system_prompt: str, is_video: bool = Fals
             try:
                 response = client.models.generate_content(model=model, contents=contents, config=config)
                 if response.text and response.text.strip():
-                    text = response.text.strip()
+                    text = response.text.strip() if json_schema else drop_format_name(response.text.strip())
                     if response.candidates and response.candidates[0].finish_reason == types.FinishReason.MAX_TOKENS:
                         if json_schema:
                             raise RuntimeError("The answer was too long and got cut off. Try a smaller page range.")
@@ -454,6 +520,8 @@ def ask_gemini(api_key: str, contents, system_prompt: str, is_video: bool = Fals
                         time.sleep(retry_wait(err))   # wait for the minute to pass, then retry
                         continue
                     quota_kinds.append(kind)
+                    if kind == "daily":   # remember it, so later requests skip it today
+                        st.session_state.setdefault("out_of_quota", {})[model] = datetime.now().date().isoformat()
                     LAST_SKIPS.append(f"{model}: {'daily' if kind == 'daily' else 'per-minute'} free limit reached")
                     break                    # try the next model (it has its own limits)
                 if err.code == 404:          # model name retired / not available to this key
@@ -464,14 +532,14 @@ def ask_gemini(api_key: str, contents, system_prompt: str, is_video: bool = Fals
                 if attempt == 1:
                     time.sleep(5)
                     continue
-                LAST_SKIPS.append(f"{model}: Google's servers busy ({err.code})")
+                LAST_SKIPS.append(f"{model}: Google's servers were busy, error {err.code}")
                 break
 
     if quota_kinds:
         # "daily" only if EVERY model we tried is out for the day.
         raise QuotaError("daily" if all(k == "daily" for k in quota_kinds) else "minute")
     raise RuntimeError("None of the Gemini models in the list are available right now. "
-                       "Check MODEL_NAME at the top of app.py.")
+                       "Check the model names at the top of app.py.")
 
 
 def explain_gemini_error(err: Exception, thing: str = "video") -> str:
@@ -495,30 +563,30 @@ def explain_gemini_error(err: Exception, thing: str = "video") -> str:
     return f"Gemini couldn't read the {thing} ({message[:200]})."
 
 
-def notes_from_url(api_key, video_id, style, language):
+def notes_from_url(api_key, video_id, style, language, model):
     """Method A: let Gemini watch the YouTube video itself."""
     url = f"https://www.youtube.com/watch?v={video_id}"
     contents = types.Content(role="user", parts=[
         types.Part(file_data=types.FileData(file_uri=url)),
         types.Part(text=f"Make {style.lower()} notes for this video, following the format and language rules."),
     ])
-    return ask_gemini(api_key, contents, build_system_prompt(style, language), is_video=True)
+    return ask_gemini(api_key, contents, build_system_prompt(style, language), model, is_video=True)
 
 
-def notes_from_pdf_part(api_key, pdf_bytes, message, style, language):
+def notes_from_pdf_part(api_key, pdf_bytes, message, style, language, model):
     """Send one PDF part to Gemini. Gemini reads it page by page, as images
     plus text, so tables, diagrams and scanned pages all work."""
     contents = [types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), message]
     is_flashcards = style.startswith("Flashcards")
-    return ask_gemini(api_key, contents, build_pdf_system_prompt(style, language),
+    return ask_gemini(api_key, contents, build_pdf_system_prompt(style, language), model,
                       json_schema=FLASHCARD_SCHEMA if is_flashcards else None)
 
 
-def notes_from_text(api_key, transcript, style, language):
+def notes_from_text(api_key, transcript, style, language, model):
     """Methods B and C: send transcript text to Gemini."""
     prompt = (f"Below is the transcript of a YouTube video. Make {style.lower()} notes from it, "
               f"following the format and language rules.\n\nTRANSCRIPT:\n{transcript}")
-    return ask_gemini(api_key, prompt, build_system_prompt(style, language))
+    return ask_gemini(api_key, prompt, build_system_prompt(style, language), model)
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +602,23 @@ def get_api_key():
     except Exception:  # no secrets.toml file, or no key inside it
         return None
     return secret if secret and secret != PLACEHOLDER_KEY else None
+
+
+def choose_model(task: str, parts: int = 1):
+    """Which model to try first. Returns (model, reason shown to you).
+    task = "youtube" or a PDF note style; parts = number of PDF parts."""
+    picked = MODEL_CHOICES.get(st.session_state.get("model_choice"))
+    if picked:
+        return picked, "your choice in the sidebar"
+    if task == "youtube":
+        return BEST_MODEL, "Auto: best quality for videos"
+    if task == "Quick summary":
+        return MORE_MODEL, "Auto: a quick summary doesn't need the top model"
+    if task.startswith("Flashcards"):
+        return MORE_MODEL, "Auto: flashcards don't need the top model"
+    if parts >= AUTO_MORE_FROM_PARTS:
+        return MORE_MODEL, f"Auto: {parts} parts would use up most of 3.8 Flash's ~20 daily requests"
+    return BEST_MODEL, "Auto: best quality for detailed notes"
 
 
 def copy_button(text: str):
@@ -612,8 +697,13 @@ with st.sidebar:
                   help="Get a free key at aistudio.google.com. It's kept only for this browser session.")
     if not st.session_state.api_key_input and get_api_key():
         st.caption("✅ Using the key saved in the app's secrets.")
-    st.info("ℹ️ Free Gemini usage is limited per day (about 20 notes on the main model). "
-            "When it runs out, NoteTube switches to other free models automatically. "
+    st.radio("Model", list(MODEL_CHOICES), key="model_choice",
+             help="Auto: 3.8 Flash for YouTube and short detailed PDFs; 3.5 Flash Lite for flashcards, "
+                  f"quick summaries and PDFs with {AUTO_MORE_FROM_PARTS}+ parts.")
+    for used_up in sorted(models_out_today()):
+        st.warning(f"{label(used_up)}'s daily free limit is reached - using the other model for now.")
+    st.info("ℹ️ Free usage is limited per day: about 20 requests on 3.8 Flash and 500 on 3.5 Flash Lite. "
+            "If one runs out, NoteTube switches to the other and tells you. "
             "Re-opening notes from History is free.")
     # The History list is drawn at the very end of this file (section 11),
     # so notes made during this run show up in it straight away.
@@ -631,6 +721,8 @@ with tab_youtube:
     language = st.selectbox("Language", LANGUAGES)
     style = st.selectbox("Note style", NOTE_STYLES)
     make_clicked = st.button("✨ Make notes", type="primary", use_container_width=True)
+    yt_model, yt_why = choose_model("youtube")
+    st.caption(f"🤖 Model: {label(yt_model)} ({yt_why})")
 
     if make_clicked:
         st.session_state.failure = None
@@ -654,7 +746,7 @@ with tab_youtube:
             # Method A: Gemini watches the video directly.
             with st.spinner("Gemini is watching the video... (this can take up to a minute)"):
                 try:
-                    notes, model = notes_from_url(api_key, video_id, style, language)
+                    notes, model = notes_from_url(api_key, video_id, style, language, yt_model)
                     source = "video"
                 except Exception as err:
                     # Out of daily/minute quota -> the captions route would hit the
@@ -672,12 +764,14 @@ with tab_youtube:
                         reasons.append("Captions: " + explain_transcript_error(err))
                     else:
                         try:
-                            notes, model = notes_from_text(api_key, transcript, style, language)
+                            notes, model = notes_from_text(api_key, transcript, style, language, yt_model)
                             source = "captions"
                         except Exception as err:
                             reasons.append("Captions: " + explain_gemini_error(err))
 
             if notes:
+                if message := switch_message(yt_model, model):
+                    st.info(message)
                 save_to_history({
                     "title": get_video_title(video_id), "url": f"https://www.youtube.com/watch?v={video_id}",
                     "language": language, "style": style, "notes": notes, "model": model, "source": source,
@@ -705,7 +799,7 @@ with tab_youtube:
             else:
                 with st.spinner("Writing your notes..."):
                     try:
-                        notes, model = notes_from_text(api_key, pasted, style, language)
+                        notes, model = notes_from_text(api_key, pasted, style, language, yt_model)
                     except Exception as err:
                         st.error(explain_gemini_error(err))
                     else:
@@ -821,12 +915,14 @@ with tab_pdf:
                         use_container_width=True)
 
             requests_needed = len(parts)
-            usage = (f"This will use **{requests_needed} Gemini request{plural}** "
-                     f"(you get about {FREE_REQUESTS_PER_DAY} free per day, shared with YouTube).")
-            if requests_needed >= FREE_REQUESTS_PER_DAY:
+            pdf_model, pdf_why = choose_model(pdf_style, requests_needed)
+            per_day = FREE_LIMITS.get(pdf_model, (20, 5))[0]
+            usage = (f"This will use **{requests_needed} request{plural} on {label(pdf_model)}** "
+                     f"(about {per_day} free per day, shared with YouTube) · {pdf_why}.")
+            if requests_needed >= per_day:
                 st.warning(usage + " That's a whole day's free limit (or more) - choose a smaller page range "
                            "(a few chapters at a time) and do the rest tomorrow.")
-            elif requests_needed > FREE_REQUESTS_PER_DAY // 2:
+            elif requests_needed > per_day // 2:
                 st.warning(usage)
             else:
                 st.info(usage)
@@ -843,23 +939,25 @@ with tab_pdf:
                             "(no free request used).")
                 else:
                     is_flashcards = pdf_style.startswith("Flashcards")
-                    texts, cards, headings, models_used, skips = [], [], [], [], []
+                    texts, cards, headings, models_used, switches = [], [], [], [], []
                     stopped = None   # (part number, error) if something went wrong
                     progress = st.progress(0.0)
 
                     # Send the parts one after another.
                     for n, part in enumerate(parts, 1):
                         if n > 1:
-                            progress.progress((n - 1) / len(parts),
-                                              text=f"Short pause before part {n} (free limit: 5 requests/minute)...")
-                            time.sleep(PAUSE_BETWEEN_PARTS)
+                            last_model = models_used[-1]
+                            progress.progress((n - 1) / len(parts), text=(
+                                f"Short pause before part {n} (free limit: "
+                                f"{FREE_LIMITS.get(last_model, (0, 5))[1]} requests/minute)..."))
+                            time.sleep(pause_between_parts(last_model))
                         progress.progress((n - 1) / len(parts),
                                           text=f"Part {n} of {len(parts)}: {part.label} - Gemini is reading...")
                         message = build_part_message(uploaded.name, part, n, len(parts), headings)
                         try:
                             text, model = notes_from_pdf_part(
                                 api_key, part_pdf_bytes(reader, part.start, part.end),
-                                message, pdf_style, pdf_language)
+                                message, pdf_style, pdf_language, pdf_model)
                             if is_flashcards:
                                 for card in json.loads(text):
                                     if card.get("question") and card.get("answer"):
@@ -872,14 +970,15 @@ with tab_pdf:
                                 # Remember the headings so the next part doesn't repeat them.
                                 headings += [PAGE_REF.sub("", ln).strip() for ln in text.splitlines()
                                              if ln.startswith("#")]
-                            skips += [f"Part {n}: {s}" for s in LAST_SKIPS]
+                            if note := switch_message(pdf_model, model):
+                                switches.append(note)
                         except Exception as err:
                             stopped = (n, err)
                             break
                         models_used.append(model)
                     progress.progress(1.0, text="Stopped." if stopped else "Done!")
-                    if skips:   # explain why a backup model was used for some parts
-                        st.caption("ℹ️ Backup model used: " + "; ".join(skips))
+                    for note in dict.fromkeys(switches):   # tell you about model switches (each once)
+                        st.info(note)
 
                     if stopped:
                         n, err = stopped

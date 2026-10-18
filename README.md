@@ -51,8 +51,9 @@ so **tables, diagrams and scanned pages** work too.
 
 ### Saving your free requests
 
-- PDFs share the **~20 free requests per day** with YouTube. **1 part = 1 request.**
-- A 300-page book in detailed notes is about 15-20 requests - do **a few chapters per day** with the page range.
+- **1 part = 1 request.** PDFs share the free daily limits with YouTube (see *Choosing a model* below).
+- A 300-page book in detailed notes is about 15-20 requests. In **Auto**, that runs on 3.5 Flash Lite (~500/day);
+  on 3.8 Flash (~20/day) do **a few chapters per day** with the page range.
 - If the free limit runs out halfway, the parts already done are **kept**, and the notes say exactly
   which pages are left (e.g. *"run From page 63 To page 120 later"*).
 - Pressing Start again for the same PDF + pages + style + language re-opens the notes for free.
@@ -84,14 +85,29 @@ so **tables, diagrams and scanned pages** work too.
 2. Click **Create API key** → copy it (it starts with `AIza...`).
 3. Treat it like a password: don't share it or put it in your code.
 
-> **Free limits** (example for Gemini 3.8 Flash): 5 requests/minute, 250K tokens/minute, 20 requests/day.
-> Each note = 1 request. NoteTube saves your quota by:
-> - sending videos at **low resolution** (~1/3 the tokens, so videos up to roughly 40 minutes fit the 250K/minute limit),
-> - switching to **other free models** (each has its own separate limits) when one runs out,
+### Choosing a model (sidebar → Model)
+
+| Choice | Model | Free limit | Use it for |
+|---|---|---|---|
+| **Auto (recommended)** | picks per task (below) | - | Most of the time |
+| Best quality | Gemini 3.8 Flash | ~20 requests/day, 5/minute | Important notes where quality matters most |
+| More requests | Gemini 3.5 Flash Lite | ~500 requests/day, 15/minute | Lots of notes, big PDFs |
+
+**What Auto picks:** 3.8 Flash for YouTube and for detailed notes / exam revision on PDFs with up to 3 parts;
+3.5 Flash Lite for flashcards, quick summaries and PDFs with 4 or more parts.
+The app always shows which model it will use (and why) before you start.
+
+**If a model's limit is reached**, NoteTube automatically switches to the other one and tells you
+(*"3.8 Flash couldn't be used (its daily free limit is reached), so NoteTube switched to 3.5 Flash Lite"*).
+It remembers this for the rest of your visit, so it doesn't waste time asking the used-up model again.
+If both are used up, it tries a few other free backup models.
+
+> Each note (or PDF part) = 1 request. NoteTube also saves quota by:
+> - sending videos at **low resolution** (~1/3 the tokens, so videos up to roughly 40 minutes fit the 250K tokens/minute limit),
 > - showing notes again from **History** (or when you repeat the same video + style + language) without a new request.
 >
-> If you see "free daily limit may be reached", try again tomorrow.
-> To change the AI model, edit `MODEL_NAME` / `FALLBACK_MODELS` at the top of `app.py`
+> Check your own limits at https://aistudio.google.com/rate-limit. To change models or limits, edit
+> `BEST_MODEL`, `MORE_MODEL`, `FREE_LIMITS` and `FALLBACK_MODELS` at the top of `app.py`
 > (current names: https://ai.google.dev/gemini-api/docs/models).
 
 ## 2. Run it on your Windows computer
@@ -177,12 +193,12 @@ It now opens like an app. 🎉
 |---|---|
 | "Please paste your free Gemini API key" | Add the key in the sidebar or `secrets.toml` |
 | "API key was rejected" | Copy the key again from aistudio.google.com/apikey |
-| "free daily limit may be reached" | Wait until tomorrow, or try a shorter video |
+| "free daily limit may be reached" | All free models are used up - try again tomorrow |
 | "no captions" / "blocked" | Paste the transcript manually |
 | "video is too long" | Use a shorter video or paste part of the transcript |
-| Model not found | Update `MODEL_NAME` at the top of `app.py` |
+| Model not found | Update `BEST_MODEL` / `MORE_MODEL` at the top of `app.py` |
 | "PDF is password-protected" | Remove the password (e.g. print to PDF) and upload again |
 | "Stopped after part X" | Free limit reached - run the page range it shows later |
-| "Backup model used" | Your main model was busy or out of quota; notes are still fine |
+| "...switched to 3.5 Flash Lite" (or 3.8 Flash) | The chosen model was busy or out of quota; notes are still fine |
 | "length limit" warning in the notes | Use a smaller page range for that chapter |
 | Upload says "File must be 200MB or smaller" | Split the PDF first, or compress it with a tool you trust |
