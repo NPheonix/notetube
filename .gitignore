@@ -11,3 +11,7 @@ env/
 # Python cache
 __pycache__/
 *.pyc
+
+# Your PDFs and the parts made by split_pdf.py - too big for GitHub
+*.pdf
+*_parts/

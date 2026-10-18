@@ -64,12 +64,48 @@ so **tables, diagrams and scanned pages** work too.
 2. In Anki (desktop): **File → Import** → pick the CSV → *Field separator:* **Comma** → *Note type:* **Basic** →
    Field 1 = Front, Field 2 = Back → **Import**.
 
+### PDF bigger than 200 MB? Split it on your computer first
+
+Streamlit Cloud can't take very big uploads (e.g. a 500 MB book). The **split_pdf.py** tool cuts the book
+into parts **under 150 MB** on your own computer - chapter by chapter, the same smart way the app does.
+It's free, needs no internet, and uses no Gemini requests.
+
+1. Open **PowerShell** in the NoteTube folder (File Explorer → click the address bar → type `powershell` → Enter).
+2. Type this, with **your** PDF's path in quotes, and press Enter:
+   ```powershell
+   .\venv\Scripts\python.exe split_pdf.py "C:\Books\anatomy.pdf"
+   ```
+   Tip: in File Explorer, hold **Shift**, right-click the PDF → **Copy as path**, then paste it.
+3. Wait a moment. It prints each part as it saves it:
+   ```
+   📄 anatomy.pdf: 349 pages, 499 MB
+      Split by chapter, using the PDF's bookmarks. → 5 parts
+      ✅ Part1_FrontMatter_Ch1-2.pdf      pages 1-74 (74 pages), 106 MB
+      ✅ Part2_Ch3.pdf                    pages 75-134 (60 pages), 86 MB
+      ✅ Part3_Ch4_piece1of2.pdf          pages 135-199 (65 pages), 93 MB
+      ...
+   ```
+4. The parts are in a new folder **next to the PDF**, e.g. `C:\Books\anatomy_parts\`.
+   Upload them **one at a time** in NoteTube's 📄 PDF tab.
+
+Good to know:
+- **File names** use the book's own chapter numbers (`Part2_Ch3.pdf` = Chapter 3). A chapter too big on its own
+  is split into pieces (`Ch4_piece1of2`, `Ch4_piece2of2`).
+- Each part **keeps its chapter bookmarks**, so the app still splits it by chapter.
+- **Page numbers** in notes made from a part, like (p. 12), count pages *inside that part file*.
+  The part's file list above shows where it starts in the book (e.g. Part 2 starts at book page 75).
+- It works on huge files without filling your memory (a 500 MB book used about 250 MB) and doesn't
+  compress images, so scanned pages stay readable.
+- Want smaller parts? Add `--max-mb`, e.g. `... split_pdf.py "C:\Books\anatomy.pdf" --max-mb 100`
+- Running it again replaces parts with the same names in that folder.
+
 ## Files
 
 | File | What it is |
 |---|---|
 | `app.py` | The whole app (UI, prompts, Gemini, YouTube and PDF logic) |
 | `pdf_tools.py` | Opens PDFs, finds chapters and splits big PDFs into parts |
+| `split_pdf.py` | Tool you run on your computer to split huge PDFs (500 MB+) into parts under 150 MB |
 | `export_utils.py` | Turns notes into .txt and PDF |
 | `fonts/` | Free Noto fonts so the PDF shows Hindi correctly (OFL licence) |
 | `requirements.txt` | Python packages the app needs |
@@ -201,4 +237,4 @@ It now opens like an app. 🎉
 | "Stopped after part X" | Free limit reached - run the page range it shows later |
 | "...switched to 3.5 Flash Lite" (or 3.8 Flash) | The chosen model was busy or out of quota; notes are still fine |
 | "length limit" warning in the notes | Use a smaller page range for that chapter |
-| Upload says "File must be 200MB or smaller" | Split the PDF first, or compress it with a tool you trust |
+| Upload says "File must be 200MB or smaller" | Split it with `split_pdf.py` (see *PDF bigger than 200 MB?*) |
