@@ -36,7 +36,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api import _errors as yt_errors
 
 from export_utils import markdown_to_pdf, markdown_to_plain_text
-from pdf_tools import open_pdf, part_pdf_bytes, plan_parts
+from pdf_tools import book_start_page, open_pdf, part_pdf_bytes, plan_parts
 
 # ---------------------------------------------------------------------------
 # 1. SETTINGS - change these if Google renames or retires a model.
@@ -260,20 +260,21 @@ def build_part_message(file_name, part, number, total, earlier_headings):
 PAGE_REF = re.compile(r"\((pp?)\.\s*(\d+)(?:\s*[-–]\s*(\d+))?\)")
 
 
-def to_pdf_page(n: int, part) -> int:
+def to_pdf_page(n: int, part, book_offset: int = 0) -> int:
     """Gemini counts pages inside the part it was sent (p. 1 = the part's first
-    page). Turn that into the real page number in the whole PDF."""
+    page). Turn that into the real page number in the whole PDF - and, if this
+    PDF is a piece of a bigger book, in the book (book_offset = pages before it)."""
     pages_in_part = part.end - part.start + 1
     if 1 <= n <= pages_in_part:
-        return n + part.start
+        return n + part.start + book_offset
     return n   # outside the part's range - probably already a real page number, keep it
 
 
-def fix_page_refs(text: str, part) -> str:
-    """Rewrite every (p. N) in the notes to real PDF page numbers."""
+def fix_page_refs(text: str, part, book_offset: int = 0) -> str:
+    """Rewrite every (p. N) in the notes to real page numbers."""
     def fix(match):
-        first = to_pdf_page(int(match.group(2)), part)
-        last = f"-{to_pdf_page(int(match.group(3)), part)}" if match.group(3) else ""
+        first = to_pdf_page(int(match.group(2)), part, book_offset)
+        last = f"-{to_pdf_page(int(match.group(3)), part, book_offset)}" if match.group(3) else ""
         return f"({match.group(1)}. {first}{last})"
     return PAGE_REF.sub(fix, text)
 
@@ -883,6 +884,21 @@ with tab_pdf:
         col_from, col_to = st.columns(2)
         first_page = col_from.number_input("From page", 1, page_count, 1, key=f"pdf_from_{file_id}")
         last_page = col_to.number_input("To page", 1, page_count, page_count, key=f"pdf_to_{file_id}")
+
+        # Optional: if this file is a piece of a bigger book (e.g. a part made by
+        # split_pdf.py), page references in the notes can use the BOOK's page numbers.
+        saved_start = book_start_page(reader)   # split_pdf.py saves this inside each part
+        book_start = st.number_input(
+            "This file starts at book page (optional)", min_value=1, value=saved_start,
+            key=f"pdf_bookstart_{file_id}",
+            help="Leave at 1 for a whole book. If this PDF is part of a bigger book - e.g. it starts "
+                 "at page 75 of the book - enter 75, and (p. N) in the notes will match the real book pages.")
+        book_offset = int(book_start) - 1   # pages of the book that come before this file
+        if saved_start > 1:
+            st.caption(f"📌 Filled in from split_pdf.py: this part starts at book page {saved_start}.")
+        if book_offset:
+            st.caption(f"Pages {int(first_page)}-{int(last_page)} of this file = book pages "
+                       f"{int(first_page) + book_offset}-{int(last_page) + book_offset}.")
         pdf_language = st.selectbox("Language", LANGUAGES, key="pdf_language")
         pdf_style = st.selectbox("Note style", list(PDF_STYLES), key="pdf_style")
 
@@ -929,7 +945,7 @@ with tab_pdf:
 
             if st.button("✨ Start", type="primary", use_container_width=True, key="pdf_start"):
                 api_key = get_api_key()
-                history_key = f"pdf:{file_id}:{first}-{last}"
+                history_key = f"pdf:{file_id}:{first}-{last}:book{book_start}"   # start page changes the notes
                 earlier = find_in_history(history_key, pdf_style, pdf_language)
                 if not api_key:
                     st.error("Please paste your free Gemini API key in the sidebar (☰ menu on phones).")
@@ -962,10 +978,10 @@ with tab_pdf:
                                 for card in json.loads(text):
                                     if card.get("question") and card.get("answer"):
                                         if card.get("page"):
-                                            card["page"] = to_pdf_page(int(card["page"]), part)
+                                            card["page"] = to_pdf_page(int(card["page"]), part, book_offset)
                                         cards.append(card)
                             else:
-                                text = fix_page_refs(text, part)   # page numbers -> real PDF pages
+                                text = fix_page_refs(text, part, book_offset)   # page numbers -> real (book) pages
                                 texts.append(text)
                                 # Remember the headings so the next part doesn't repeat them.
                                 headings += [PAGE_REF.sub("", ln).strip() for ln in text.splitlines()
@@ -994,7 +1010,7 @@ with tab_pdf:
                         if stopped:
                             # Keep what we have, and say exactly what's left to do.
                             notes += (f"\n\n> ⚠️ Stopped after part {len(models_used)} of {len(parts)}. "
-                                      f"Not done yet: pages {done_to + 2}-{last + 1}. To finish, run "
+                                      f"Not done yet: pages {done_to + 2}-{last + 1} of this file. To finish, run "
                                       f"From page {done_to + 2} To page {last + 1} later.")
                         save_to_history({
                             "title": uploaded.name, "url": "",
@@ -1002,7 +1018,9 @@ with tab_pdf:
                             "key": history_key + (":partial" if stopped else ""),
                             "language": pdf_language, "style": pdf_style, "notes": notes,
                             "model": ", ".join(dict.fromkeys(models_used)),   # each model once
-                            "source": f"PDF pages {first + 1}-{done_to + 1}",
+                            "source": f"PDF pages {first + 1}-{done_to + 1}" + (
+                                f" (book pages {first + 1 + book_offset}-{done_to + 1 + book_offset})"
+                                if book_offset else ""),
                             "created": datetime.now().strftime("%d %b %Y, %I:%M %p"),
                             "cards": cards if is_flashcards else None,
                         })

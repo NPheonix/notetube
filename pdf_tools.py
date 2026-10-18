@@ -131,11 +131,26 @@ def part_size(reader: PdfReader, start: int, end: int) -> int:
     return counter.size
 
 
+# Saved inside each part made by split_pdf.py: the book page the part starts
+# at. The app reads it to fill in "This file starts at book page" for you.
+BOOK_START_KEY = "/NoteTubeBookStartPage"
+
+
+def book_start_page(reader: PdfReader) -> int:
+    """The book page this PDF starts at (from split_pdf.py), or 1 if unknown."""
+    try:
+        value = int(str((reader.metadata or {}).get(BOOK_START_KEY, 1)))
+        return value if value >= 1 else 1
+    except Exception:   # missing or broken - just start at page 1
+        return 1
+
+
 def write_part(reader: PdfReader, part, path) -> None:
     """Save one part as a PDF file, straight to disk.
 
     The part's chapters are added as bookmarks, so when you upload the part
-    to NoteTube it can still split it by chapter.
+    to NoteTube it can still split it by chapter. The book page the part
+    starts at is saved too, so the notes can use real book page numbers.
     """
     writer = PdfWriter()
     for i in range(part.start, part.end + 1):
@@ -145,6 +160,8 @@ def write_part(reader: PdfReader, part, path) -> None:
             continue
         title = chapter.title + (f" (piece {chapter.piece[0]} of {chapter.piece[1]})" if chapter.piece else "")
         writer.add_outline_item(title, chapter.start - part.start)
+    # If this PDF was itself a part, add its own start page (so splitting twice still adds up).
+    writer.add_metadata({BOOK_START_KEY: str(book_start_page(reader) + part.start)})
     with open(path, "wb") as f:
         writer.write(f)
     _forget_read_pages(reader)

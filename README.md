@@ -23,6 +23,8 @@ so **tables, diagrams and scanned pages** work too.
 
 1. **Upload** a PDF - up to **200 MB** and **1,000 pages**. NoteTube shows the page count.
 2. **Pick a page range** (optional) - e.g. *From page 10 To page 35* to do one chapter at a time.
+   **This file starts at book page** (optional) - if the PDF is only part of a bigger book (e.g. it starts at
+   page 75), enter 75 so page references like (p. 80) in the notes match the real book. Leave it at 1 otherwise.
 3. Pick the **language** and **note style**:
 
    | Style | What you get | Pages per request |
@@ -92,8 +94,9 @@ Good to know:
 - **File names** use the book's own chapter numbers (`Part2_Ch3.pdf` = Chapter 3). A chapter too big on its own
   is split into pieces (`Ch4_piece1of2`, `Ch4_piece2of2`).
 - Each part **keeps its chapter bookmarks**, so the app still splits it by chapter.
-- **Page numbers** in notes made from a part, like (p. 12), count pages *inside that part file*.
-  The part's file list above shows where it starts in the book (e.g. Part 2 starts at book page 75).
+- **Page numbers match the real book.** Each part remembers which book page it starts at, and the app fills in
+  *This file starts at book page* for you (you'll see *"Filled in from split_pdf.py"*). So notes from
+  `Part2_Ch3.pdf` say (p. 80), not (p. 6).
 - It works on huge files without filling your memory (a 500 MB book used about 250 MB) and doesn't
   compress images, so scanned pages stay readable.
 - Want smaller parts? Add `--max-mb`, e.g. `... split_pdf.py "C:\Books\anatomy.pdf" --max-mb 100`
