@@ -4,6 +4,8 @@ primaryColor = "#ff4b4b"
 
 [server]
 headless = true
+# Biggest PDF you can upload, in MB (must match MAX_UPLOAD_MB in app.py).
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false

@@ -93,7 +93,7 @@ def _write(pdf, text, size, bold=False, color=(30, 30, 30), indent=0.0, space_af
     pdf.set_font("NotoSans", "B" if bold else "", size)
     pdf.set_text_color(*color)
     pdf.set_x(pdf.l_margin + indent)
-    pdf.multi_cell(pdf.epw - indent, line_h or size * 0.55, text, markdown=True,
+    pdf.multi_cell(pdf.epw - indent, line_h or size * 0.55, text, markdown=True, align="L",
                    new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(space_after)
 
@@ -106,9 +106,26 @@ def _list_item(pdf, marker, text, level):
     pdf.set_text_color(30, 30, 30)
     pdf.set_x(pdf.l_margin + indent)
     pdf.cell(marker_w, 6.2, marker)
-    pdf.multi_cell(pdf.epw - indent - marker_w, 6.2, text, markdown=True,
+    pdf.multi_cell(pdf.epw - indent - marker_w, 6.2, text, markdown=True, align="L",
                    new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(1)
+
+
+def _table(pdf, rows):
+    """Draw a Markdown table as a real table with borders. First row = headings."""
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]   # every row needs the same number of cells
+    pdf.set_font("NotoSans", "", 9.5)
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_draw_color(190, 190, 190)
+    pdf.ln(1)
+    with pdf.table(markdown=True, text_align="LEFT", line_height=5.2, padding=1.5,
+                   cell_fill_color=(242, 242, 242), cell_fill_mode="ROWS") as table:
+        for cells in rows:
+            row = table.row()
+            for text in cells:
+                row.cell(text)
+    pdf.ln(3)
 
 
 def markdown_to_pdf(md: str, title: str, video_url: str, date_text: str, subtitle: str = "") -> bytes:
@@ -130,10 +147,19 @@ def markdown_to_pdf(md: str, title: str, video_url: str, date_text: str, subtitl
 
     # --- Body: go through the notes line by line ---
     in_code_block = False
+    table_rows = []   # rows of a Markdown table, collected until the table ends
     for raw in md.splitlines():
         line = re.sub(r"(?<=\S) {2,}", " ", EMOJI_PATTERN.sub("", raw)).rstrip()
         if re.fullmatch(r"\s*\|[\s|:-]+", line):
             continue  # the |---|---| row under a table header - nothing to print
+        if line.strip().startswith("|") and not in_code_block:          # table row: collect it
+            line = line.replace("--", "–")
+            table_rows.append([clean_inline(c.strip(), keep_bold=True)
+                               for c in line.strip().strip("|").split("|")])
+            continue
+        if table_rows:                                                   # table just ended: draw it
+            _table(pdf, table_rows)
+            table_rows = []
         # fpdf treats '--' as strikethrough; Markdown doesn't, so turn it into a dash.
         line = line.replace("--", "–") if not re.fullmatch(r"\s*-{3,}\s*", line) else line
 
@@ -164,10 +190,9 @@ def markdown_to_pdf(md: str, title: str, video_url: str, date_text: str, subtitl
         elif line.lstrip().startswith(">"):                               # > quote
             _write(pdf, clean_inline(line.lstrip("> "), keep_bold=True), 11,
                    color=(90, 90, 90), indent=6, space_after=1.5)
-        elif line.strip().startswith("|"):                                # table row
-            cells = [clean_inline(c.strip(), keep_bold=True) for c in line.strip().strip("|").split("|")]
-            _write(pdf, "   |   ".join(cells), 10.5, space_after=1)
         else:
             _write(pdf, clean_inline(line, keep_bold=True), 11, space_after=1.5, line_h=6.2)
 
+    if table_rows:   # the notes ended with a table
+        _table(pdf, table_rows)
     return bytes(pdf.output())

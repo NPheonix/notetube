@@ -1,24 +1,74 @@
 # 📝 NoteTube
 
-Paste a YouTube link → get clean notes in **English, Hinglish or Hindi**.
-Copy them, or download as **.md, .txt or PDF**. Works on phone, tablet and laptop. 100% free.
+Paste a YouTube link **or upload a PDF** → get clean notes in **English, Hinglish or Hindi**.
+Copy them, or download as **.md, .txt or PDF** (flashcards also as **CSV for Anki**). Works on phone, tablet and laptop. 100% free.
 
-**Note styles:** Quick summary · Detailed study notes · Action items and takeaways · Content ideas for CPV FitLab (5 Instagram carousels + 3 Reels hooks)
+**YouTube note styles:** Quick summary · Detailed study notes · Action items and takeaways · Content ideas for CPV FitLab (5 Instagram carousels + 3 Reels hooks)
+**PDF note styles:** Detailed study notes · Exam revision · Quick summary · Flashcards (Anki CSV)
 
 ---
 
-## How it reads a video
+## How it reads a video (YouTube tab)
 
 1. **Gemini watches the video directly** from its YouTube URL (public videos only).
 2. If that fails → it downloads the video's **captions** and sends the text to Gemini.
 3. If that fails too → it tells you why, and you can **paste a transcript** yourself
    (on YouTube: ⋯ More → *Show transcript* → copy the text).
 
+## PDF notes (PDF tab)
+
+Upload a book chapter, study material, report or slides and get **full study notes** - detailed
+enough to study from without re-reading the PDF. Gemini reads every page as an image plus text,
+so **tables, diagrams and scanned pages** work too.
+
+1. **Upload** a PDF - up to **200 MB** and **1,000 pages**. NoteTube shows the page count.
+2. **Pick a page range** (optional) - e.g. *From page 10 To page 35* to do one chapter at a time.
+3. Pick the **language** and **note style**:
+
+   | Style | What you get | Pages per request |
+   |---|---|---|
+   | Detailed study notes (default) | Follows the PDF's chapters and sections: key points, definitions, formulas, examples, important numbers, tables, page refs like (p. 12) | 20 |
+   | Exam revision | Per chapter: key concepts, formulas, likely questions with short answers, common mistakes | 30 |
+   | Quick summary | 8-12 bullets | 150 |
+   | Flashcards (Anki CSV) | Question/answer cards, downloadable as CSV | 25 |
+
+4. **Check the plan before you start.** Big PDFs are split into parts, and NoteTube shows them first,
+   e.g. *"Part 1: Chapters 1-4 (pages 1-62)"*, and tells you **how many requests** it will use.
+   Nothing is sent to Gemini until you press **Start**.
+5. Press **Start**. You'll see *"Part 2 of 4..."* while it works, with a short pause between parts
+   (the free tier allows 5 requests per minute). The parts' notes are joined into one document.
+
+### How big PDFs are split (smart splitting)
+
+- NoteTube uses the PDF's **bookmarks** (the chapter list in your PDF viewer's sidebar) to split by chapter.
+  Each part holds only **complete chapters**; a chapter that doesn't fit starts the next part.
+- Only a chapter that's too big on its own is split by pages (into even pieces, e.g. 15 + 15 + 15 pages).
+- No bookmarks? It looks for headings like *"Chapter 3"* / *"Unit 2"* / *"अध्याय 3"* in the page text.
+  If it can't find any (e.g. scanned books), it splits by pages.
+- Each part stays under **20 MB**. Pages are copied as they are - **no image compression**, so scanned
+  pages stay readable.
+- You can **download each part as its own PDF** from the parts list.
+
+### Saving your free requests
+
+- PDFs share the **~20 free requests per day** with YouTube. **1 part = 1 request.**
+- A 300-page book in detailed notes is about 15-20 requests - do **a few chapters per day** with the page range.
+- If the free limit runs out halfway, the parts already done are **kept**, and the notes say exactly
+  which pages are left (e.g. *"run From page 63 To page 120 later"*).
+- Pressing Start again for the same PDF + pages + style + language re-opens the notes for free.
+
+### Flashcards → Anki
+
+1. Choose **Flashcards (Anki CSV)** and press Start, then **⬇️ Flashcards .csv (for Anki)**.
+2. In Anki (desktop): **File → Import** → pick the CSV → *Field separator:* **Comma** → *Note type:* **Basic** →
+   Field 1 = Front, Field 2 = Back → **Import**.
+
 ## Files
 
 | File | What it is |
 |---|---|
-| `app.py` | The whole app (UI, prompts, Gemini + YouTube logic) |
+| `app.py` | The whole app (UI, prompts, Gemini, YouTube and PDF logic) |
+| `pdf_tools.py` | Opens PDFs, finds chapters and splits big PDFs into parts |
 | `export_utils.py` | Turns notes into .txt and PDF |
 | `fonts/` | Free Noto fonts so the PDF shows Hindi correctly (OFL licence) |
 | `requirements.txt` | Python packages the app needs |
@@ -131,3 +181,8 @@ It now opens like an app. 🎉
 | "no captions" / "blocked" | Paste the transcript manually |
 | "video is too long" | Use a shorter video or paste part of the transcript |
 | Model not found | Update `MODEL_NAME` at the top of `app.py` |
+| "PDF is password-protected" | Remove the password (e.g. print to PDF) and upload again |
+| "Stopped after part X" | Free limit reached - run the page range it shows later |
+| "Backup model used" | Your main model was busy or out of quota; notes are still fine |
+| "length limit" warning in the notes | Use a smaller page range for that chapter |
+| Upload says "File must be 200MB or smaller" | Split the PDF first, or compress it with a tool you trust |
